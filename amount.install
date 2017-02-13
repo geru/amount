@@ -1,0 +1,45 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the number module.
+ */
+
+/**
+ * Implements hook_field_schema().
+ */
+function amount_field_schema($field) {
+  return array(
+    'columns' => array(
+      'amount' => array(
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+      ),
+      'units' => array( // type of units: type_code_multiplier_symbol
+        'type' => 'varchar',
+        'length' => 16,
+        'not null' => FALSE,
+      ),
+    )
+  );
+}
+
+/**
+ * Implements hook_requirements()
+ */
+function amount_requirements($phase) {
+  $requirements = array();
+
+  if ($phase == 'install') {
+    // Ensure translations do not break at install time
+    global $base_url;
+    if( PHP_INT_SIZE != 8 ) {
+      $t = get_t();
+      $requirements['PHP']['title'] = $t('PHP');
+      $requirements['PHP']['severity'] = REQUIREMENT_WARNING;
+      $requirements['PHP']['description'] = $t('Amount field wants a 64-bit version of PHP. Yours is 32-bit. the Amount field will not work properly. Please see your system administrator to upgrade your PHP interpreter to a 64-bit version.');
+    }
+  }
+  return $requirements;
+}

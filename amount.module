@@ -1,0 +1,206 @@
+<?php
+
+/**
+ * @file
+ * Defines numeric field types.
+ */
+
+/**
+ * Implements hook_help().
+ */
+function amount_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#amount':
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('The Amount module defines a numeric field type for the Field module. Amounts are in 64-bit integer form, and they can be formatted when displayed. Amount fields can be limited to a specific set of input values or to a range of values. See the <a href="@field-help">Field module help page</a> for more information about fields.', array('@field-help' => url('admin/help/field'))) . '</p>';
+      return $output;
+  }
+}
+
+/**
+ * Implements hook_field_info().
+ * Precision:
+ *   base 2 measured by 10: 2d=1/(2^10), 2K=2^10, 2v=1/(2^20), 2M=2^20
+ *   base 10 measured by 3: 0k=1000, 0m=1/1000, 0M=1000000, 0u=1/1000000
+ */
+function amount_field_info() {
+  return array(
+    'amount' => array(
+      'label' => t('Amount'),
+      'description' => t('This field stores a number in the database as a 64-bit integer with associated units and scale.'),
+      'settings' => array('decimal_separator' => '.', 'thousand_separator' => ','),
+      'instance_settings' => array('precision' => '0u', 'minscale' => 0, 'min' => '', 'max' => '', 'unitsdisplay' => 'hidden', 'units' => NULL),
+      'default_widget' => 'amount',
+      'default_formatter' => 'amount_formatted',
+    ),
+  );
+}
+
+/* ******************************************************************
+ * Amount conversions
+ */
+require_once 'amount.convert.inc';
+
+/**
+ * Implements hook_field_settings_form().
+ */
+function amount_field_settings_form($field, $instance, $has_data) {
+  $settings = $field['settings'];
+  $form = array();
+  $form['decimal_separator'] = array(
+    '#type' => 'select',
+    '#title' => t('Decimal marker'),
+    '#options' => array('.' => t('Decimal point'), ',' => t('Comma')),
+    '#default_value' => $settings['decimal_separator'],
+    '#description' => t('The character users will input to mark the decimal point in forms.'),
+  );
+  $form['thousand_separator'] = array(
+    '#type' => 'select',
+    '#title' => t('Thousands marker'),
+    '#options' => array('.' => t('Decimal point'), ',' => t('Comma'), ' ' => t('Space')),
+    '#default_value' => $settings['thousand_separator'],
+    '#description' => t('The character used to mark the thousands in forms.'),
+  );
+
+  return $form;
+}
+
+/*
+ * Generate a list of allowed units
+ */
+function amount_defined_units( $types=NULL ) {
+  $permutations = array(
+    'AMT' => array( '1x'  => array( 'ea' => array() ),
+                    '12x' => array( 'doz' => array() ) ),
+    'CUR' => array( 'USD' => array( '$' => array() ),
+                    'GBP' => array( '£' => array() ),
+                    'EUR' => array( '€' => array() ),
+                    'AUD' => array( '$' => array() ) ),
+    'LEN' => array( 'SI'  => array( 'm' => array( 'k', '', 'c', 'm', 'u', 'n' ) ),
+                    'in'  => array( '"' => array() ),
+                    'ft'  => array( "'" => array() ),
+                    'mi'  => array( 'mi' => array() ) ),
+    'MAS' => array( 'lb'  => array( '#' => array() ),
+                    'SI'  => array( 'g' => array( 'M', 'k', '', 'm' ) ) ),
+    'VOL' => array( 'SI'  => array( 'l' => array( 'k', '', 'm' ) ),
+                    'GAL' => array( 'gal' => array() ) ),
+    'CMP' => array( 'BYT' => array( 'B' => array( '', 'K', 'M', 'G', 'T', 'P' ) ),
+                    'XFR' => array( 'bps' => array( '', 'K', 'M' ) ) ),
+  );
+  $ret = array();
+  if (!$types) {
+    $types = array_keys($permutations);
+  }
+  foreach ($types as $type ) {
+    foreach ($permutations[$type] as $code => $unit) {
+      foreach ($unit as $symbol => $multipliers) {
+        if ($multipliers) {
+          foreach ($multipliers as $multiplier) {
+            $ret[] = $type . '_' . $code . '_' . $symbol . '_' . $multiplier;
+          }
+        }
+        else {
+          $ret[] = $type . '_' . $code . '_' . $symbol . '_';
+        }
+      }
+    }
+  }
+  return array_combine($ret, $ret);
+}
+/**
+ * Implements hook_field_instance_settings_form().
+ */
+function amount_field_instance_settings_form($field, $instance) {
+  $settings = $instance['settings'];
+
+  $form['precision'] = array(
+    '#type' => 'select',
+    '#title' => t('Precision'),
+    '#options' => array( '00' => 'Integer', '0c' => '10E-2', '0m' => '10E-3', '0u' => '10E-6', /*'2v' => '2^-20', '2d' => '2^-10'*/ ),
+    '#default_value' => empty($settings['precision']) ? '0u' : $settings['precision'],
+    '#description' => t('The smallest unit of precision.')
+  );
+  $element['minscale'] = array(
+    '#type' => 'select',
+    '#title' => t('Minimum scale'),
+    '#options' => drupal_map_assoc(range(0, 6)),
+    '#default_value' => $settings['minscale'],
+    '#description' => t('The minimum number of digits to show to the right of the decimal (unformatted).'),
+  );
+  $form['min'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Minimum'),
+    '#default_value' => $settings['min'],
+    '#description' => t('The minimum value that should be allowed in this field. Leave blank for no minimum.'),
+    '#element_validate' => array('element_validate_number'),
+  );
+  $form['max'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum'),
+    '#default_value' => $settings['max'],
+    '#description' => t('The maximum value that should be allowed in this field. Leave blank for no maximum.'),
+    '#element_validate' => array('element_validate_number'),
+  );
+  $form['unitsdisplay'] = array(
+    '#type' => 'select',
+    '#title' => t('Units display'),
+    '#multiple' => FALSE,
+    '#options' => array( 'hidden' => t('Not shown'), 'symbolbefore' => t('Symbol before'), 'symbolafter' => t('Symbol after'),
+      'codebefore' => 'Code before', 'codeafter' => 'Code after', 'symcode' => 'symbol amt code', 'codesym' => 'code amt symbol'  ),
+    '#default_value' => $settings['units'],
+    '#description' => t("How shall the units be displayed"),
+  );
+  $form['units'] = array(
+    '#type' => 'select',
+    '#title' => t('Units types allowed'),
+    '#options' => amount_defined_units(),
+    '#multiple' => FALSE,
+    '#default_value' => $settings['units'],
+    '#description' => t("Units allowed for this instance"),
+  );
+
+  return $form;
+}
+
+/**
+ * Implements hook_field_validate().
+ *
+ * Possible error codes:
+ * - 'number_min': The value is less than the allowed minimum value.
+ * - 'number_max': The value is greater than the allowed maximum value.
+ * todo: validate code and symbol and incorporate multiplier 
+ */
+function amount_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
+  foreach ($items as $delta => $item) {
+    if ($item['amount'] != '') {
+      if (is_numeric($instance['settings']['min']) && $item['amount'] < $instance['settings']['min']) {
+        $errors[$field['field_name']][$langcode][$delta][] = array(
+          'error' => 'number_min',
+          'message' => t('%name: the value may be no less than %min.', array('%name' => $instance['label'], '%min' => $instance['settings']['min'])),
+        );
+      }
+      if (is_numeric($instance['settings']['max']) && $item['amount'] > $instance['settings']['max']) {
+        $errors[$field['field_name']][$langcode][$delta][] = array(
+          'error' => 'number_max',
+          'message' => t('%name: the value may be no greater than %max.', array('%name' => $instance['label'], '%max' => $instance['settings']['max'])),
+        );
+      }
+    }
+  }
+}
+
+/************************************************************************
+ * Field CRUD
+ */
+require_once 'amount.crud.inc';
+
+/**************************************************************
+ * Formatter / display functionality
+ */
+require_once 'amount.display.inc';
+
+/*************************************************
+ * Widget functionality
+ */
+require_once 'amount.widget.inc';
