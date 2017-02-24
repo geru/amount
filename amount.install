@@ -10,15 +10,15 @@
  */
 function amount_field_schema($field) {
   return array(
-    'columns' => array(
-      'amount' => array(
+    'columns' => array(  
+      'amount' => array( // amounts are expected to be maintained as 64-bit integers.
         'type' => 'int',
         'size' => 'big',
         'not null' => FALSE,
       ),
       'units' => array( // type of units: type_code_multiplier_symbol
         'type' => 'varchar',
-        'length' => 16,
+        'length' => 32,
         'not null' => FALSE,
       ),
     )
@@ -35,7 +35,7 @@ function amount_requirements($phase) {
     // Ensure translations do not break at install time
     global $base_url;
     if( PHP_INT_SIZE != 8 ) {
-      $t = get_t();
+      $t = get_t(); // This is not as designed, but the concept can work in a limited fashion with 32-bit integers
       $requirements['PHP']['title'] = $t('PHP');
       $requirements['PHP']['severity'] = REQUIREMENT_WARNING;
       $requirements['PHP']['description'] = $t('Amount field wants a 64-bit version of PHP. Yours is 32-bit. the Amount field will not work properly. Please see your system administrator to upgrade your PHP interpreter to a 64-bit version.');

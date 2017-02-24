@@ -1,6 +1,6 @@
 name = Amount
 description = A numerical field type with large range, high precision, and associated units with multiplier.
-package = Enterprise
+package = Fields
 version = VERSION
 core = 7.x
 dependencies[] = field

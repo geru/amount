@@ -19,6 +19,13 @@ function amount_help($path, $arg) {
 }
 
 /**
+ * Implements hook_hook_info().
+ */
+function amount_hook_info() {
+
+}
+
+/**
  * Implements hook_field_info().
  * Precision:
  *   base 2 measured by 10: 2d=1/(2^10), 2K=2^10, 2v=1/(2^20), 2M=2^20
@@ -29,18 +36,332 @@ function amount_field_info() {
     'amount' => array(
       'label' => t('Amount'),
       'description' => t('This field stores a number in the database as a 64-bit integer with associated units and scale.'),
-      'settings' => array('decimal_separator' => '.', 'thousand_separator' => ','),
-      'instance_settings' => array('precision' => '0u', 'minscale' => 0, 'min' => '', 'max' => '', 'unitsdisplay' => 'hidden', 'units' => NULL),
+      'settings' => array(
+        'decimal_separator' => '.',
+        'thousand_separator' => ','
+      ),
+      'instance_settings' => array(
+        'precision' => '0u',
+        'minscale' => 0,
+        'min' => '',
+        'max' => '',
+        'unitsdisplay' => 'hidden',
+        'units' => NULL
+      ),
       'default_widget' => 'amount',
       'default_formatter' => 'amount_formatted',
     ),
   );
 }
 
-/* ******************************************************************
- * Amount conversions
+/*
+ * Generate a complete list of defined units
+ * @return array
+ *
+ * API:
+ * hook_amount_mapping_alter( &$mapping ) { Make changes or add to mapping array }
+ * &$mapping[] = array( type => array( code => array( symbol => array( multipliercode0, multipliercode1,... ) ),... ),... );
+ * where type is a string connoting a type of amount defined
+ *       code is a string connoting a subtype of that type of amount
+ *       symbol is a common symbol for code
+ *       multiplierN is a multiplier used with this symbol, and '' if code with multiplier of one
  */
-require_once 'amount.convert.inc';
+/**
+ */
+function amount_defined_units() {
+  $permutations = &drupal_static(__FUNCTION__, array());
+
+  if (empty($permutations)) {
+    if( $cache = cache_get(__FUNCTION__) ) {
+      $permutations = $cache->data;
+    } else {
+      $mappings = array(
+        'AMT' => array(
+          '1x' => array('ea' => array()),
+          '12x' => array('doz' => array())
+        ),
+      );
+      // Allow modules to alter the mapping array.
+      drupal_alter('amount_mapping', $mappings);
+
+      foreach ($mappings as $type => $info) {
+        foreach ($info as $code => $unitsdef) {
+          foreach ($unitsdef as $symbol => $multipliers) {
+            if ($multipliers) {
+              foreach ($multipliers as $multiplier) {
+                $permutations[] = $type . '_' . $code . '_' . $symbol . '_' . $multiplier;
+              }
+            }
+            else {
+              $permutations[] = $type . '_' . $code . '_' . $symbol . '_';
+            }
+          }
+        }
+      }
+      cache_set(__FUNCTION__, $permutations, 'cache');
+    }
+  }
+
+  return $permutations;
+}
+
+/**
+ * Implements hook_amount_mapping_alter()
+ */
+function amount_amount_mapping_alter( &$mapping ) {
+  $mappingstoadd = array(
+    'CUR' => array(
+      'USD' => array('$' => array()),
+      'GBP' => array('£' => array()),
+      'EUR' => array('€' => array()),
+      'AUD' => array('$' => array())
+    ),
+    'LEN' => array(
+      'SI' => array('m' => array('k', '', 'c', 'm', 'u', 'n')),
+      'in' => array('"' => array()),
+      'ft' => array("'" => array()),
+      'mi' => array('mi' => array())
+    ),
+    'MAS' => array(
+      'lb' => array('#' => array()),
+      'SI' => array('g' => array('M', 'k', '', 'm'))
+    ),
+    'VOL' => array(
+      'SI' => array('l' => array('k', '', 'm')),
+      'GAL' => array('gal' => array())
+    ),
+    'CMP' => array(
+      'BYT' => array('B' => array('', 'K', 'M', 'G', 'T', 'P')),
+      'XFR' => array('bps' => array('', 'K', 'M'))
+    ),
+    'TIM' => array(
+      'sec' => array('s' => array('', 'm'))
+    ),
+  );
+  $mapping += $mappingstoadd;
+}
+
+/**
+ * Gets the prefix and suffix given the units
+ * @param string $unitsdisplay
+ *   how to disply the units. Allowed values are:
+ *   'symbolbefore': symbol as prefix
+ *   'codesym':      code prefix and symbol suffix
+ *   'symbolafter':  symbol as suffix
+ *   'codebefore':   code as prefix
+ *   'symcode':      symbol as prefix and code as suffix
+ *   'codeafter':    code as suffix
+ * @param string $units
+ *   The units string, which is an underscore-delimited string formatted as:
+ *   <type>_<code>_<symbol>_<multiplier>
+ * @return array
+ *   An associative array with two strings indexed by '#prefix' and '#suffix'
+ */
+function amount_prefixsuffix($unitsdisplay, $units) {
+  $unitsvals = $units ? explode('_', $units) : array();
+  $symbol = empty($unitsvals[2]) ? '' : $unitsvals[2];
+  $code = empty($unitsvals[1]) ? '' : $unitsvals[1];
+  $multiplier = empty($unitsvals[1]) ? '' : $unitsvals[3];
+  $ret = array('#prefix' => '', '#suffix' => '');
+  switch ($unitsdisplay) {
+    case 'symbolbefore':
+      $ret['#prefix'] = $multiplier . $symbol;
+      break;
+    case 'codesym':
+      $ret['#prefix'] = $code . ' ';
+    case 'symbolafter':
+      $ret['#suffix'] = $multiplier . $symbol;
+      break;
+    case 'codebefore':
+      $ret['#prefix'] = $code . ' ';
+      break;
+    case 'symcode':
+      $ret['#prefix'] = $multiplier . $symbol;
+    case 'codeafter':
+      $ret['#suffix'] = ' ' . $code;
+      break;
+  }
+  return $ret;
+}
+
+/**
+ * Converts raw Amount integer into an unformatted decimal string
+ * @param int $raw
+ *   The raw integer Amount
+ * @param $precision
+ *   Precision is defined as the smallest unit to be kept track of and is
+ *   represented as a code where the following codes are allowed:
+ *   '00': no fractional units maintained. All Amounts are whole integers.
+ *   '0c': maintain Amounts to decimal hundredths of units
+ *   '0m': maintain Amounts to decimal thousandths of units
+ *   '0u': maintain Amounts to decimal millionths of units (default)
+ * @param int $minscale
+ *   If there is a minimum number of desired digits to the right of the decimal,
+ *   this is the only formatting done on the output.
+ * @return string
+ *   The unformatted number as a PHP string
+ */
+function amount_raw2unformatted(int $raw, $precision, int $minscale = 2) {
+  switch ($precision) {
+    case '00':
+      $ret = (string) $raw;
+      break;
+    case '0c':
+      if (!isset($mantlen)) {
+        $mantlen = 2;
+      }
+    case '0m':
+      if (!isset($mantlen)) {
+        $mantlen = 3;
+      }
+    case '0u':
+      if (!isset($mantlen)) {
+        $mantlen = 6;
+      }
+      $amount = (string) $raw;
+      if (strlen($amount) < $mantlen + 1) {
+        $amount = str_pad($amount, $mantlen + 1, '0', STR_PAD_LEFT);
+      }
+      $mantissa = substr($amount, -$mantlen);
+      if (strlen($mantissa) > $minscale) {
+        $mantissa = rtrim($mantissa, '0');
+      }
+      $mantissa = str_pad($mantissa, $minscale, '0');
+      $ret = substr($amount, 0, strlen($amount) - $mantlen);
+      if (strlen($mantissa)) {
+        $ret .= '.' . $mantissa;
+      }
+      break;
+  }
+  return $ret;
+}
+
+/**
+ * Converts unformatted number string to an unformatted number string with at
+ * least a minimum number of digits to the right of the decimal.
+ * @param $orig
+ *   The original unformatted Amount
+ * @param int $minscale
+ * @return string
+ *   The original Amount formatted with at least minscale digits right of decimal
+ */
+function amount_unformatted2unformatted($orig, int $minscale = 2) {
+  $amount = explode('.', $orig);
+  if (!$amount[0]) {
+    $amount[0] = '0';
+  }
+  if ($minscale) {
+    $amount[1] = str_pad($amount[1], $minscale, '0');
+  }
+  $ret = ((string) $amount[0]);
+  if (strlen($amount[1])) {
+    $ret .= '.' . $amount[1];
+  }
+
+  return $ret;
+}
+
+/**
+ * Converts an unformatted Amount value into a raw 64-bit integer represented as
+ * a string
+ * @param $value
+ *   unformatted Amount to be converted
+ * @param $precision
+ *   smallest units to be maintained (see amount_raw2unformatted() for options)
+ * @param int $minscale
+ *   number of digits of mantissa
+ *   eg. with precision 0u, one millionth would be 1. With minscale 6, this would
+ *   be returned as 000001
+ * @return string
+ */
+function amount_unformatted2raw($value, $precision, $minscale = 0) {
+  switch ($precision) {
+    case '00':
+      $ret = (string) $value;
+      break;
+    case '0c':
+      $mantlen = 2;
+    case '0m':
+      if (empty($mantlen)) {
+        $mantlen = 3;
+      }
+    case '0u':
+      if (empty($mantlen)) {
+        $mantlen = 6;
+      }
+      $decpos = strpos($value, '.');
+      if ($decpos === FALSE) {
+        $ret = str_pad($value, strlen($value) + $mantlen, '0');
+      }
+      else {
+        $decpart = substr($value, $decpos + 1);
+        $declen = strlen($decpart);
+        $decpart = ($declen > $mantlen)
+          ? substr($decpart, 0, $mantlen)
+          : ($declen < $mantlen)
+            ? str_pad($decpart, $mantlen, '0')
+            : $decpart;
+        $ret = substr($value, 0, $decpos) . $decpart;
+        if ($minscale) {
+          $ret = str_pad($ret, $minscale, '0', STR_PAD_LEFT);
+        }
+      }
+      break;
+  }
+  return $ret;
+}
+
+/**
+ * Converts an unformatted Amount into a formatted amount. Formatted includes
+ * decimal and thousands separators and amount prefix and / or suffix
+ * @param $value
+ *   an unformatted Amount
+ * @param array $settings
+ *   associative array of settings for the formatting of the result
+ * @param string $units
+ *   associated units string
+ * @return string
+ *   formatted output ready to be displayed
+ */
+function amount_unformatted2formatted($value, $settings = array(
+  'scale' => 2,
+  'decimal_separator' => '.',
+  'thousand_separator' => ',',
+  'unitsdisplay' => 'symbolbefore'
+), $units = 'CUR_USD_$__') {
+  $scale = isset($settings['scale']) ? $settings['scale'] : 2;
+  $decimal_separator = isset($settings['decimal_separator']) ? $settings['decimal_separator'] : '.';
+  $thousand_separator = isset($settings['thousand_separator']) ? $settings['thousand_separator'] : ',';
+  $unitsdisplay = isset($settings['unitsdisplay']) ? $settings['unitsdisplay'] : 'symbolbefore';
+
+  $ret = number_format($value, $scale, $decimal_separator, $thousand_separator);
+  $prefsuf = amount_prefixsuffix($unitsdisplay, $units);
+  $ret = $prefsuf['#prefix'] . $ret . $prefsuf['#suffix'];
+  return $ret;
+}
+
+/**
+ * Converts a formatted number into an unformatted one.
+ * @param $value
+ *   a formatted value to be converted
+ * @param array $display
+ *   associative array of formatted decimal and thousand separators
+ * @return string
+ *   unformatted result (no thousand separators and decimal as a '.')
+ */
+function amount_formatted2unformatted($value, $display = array(
+  'decimal_separator' => '.',
+  'thousand_separator' => ','
+)) {
+  $value = strtr($value,
+    array(
+      $display['thousand_separator'] => '',
+      $display['decimal_separator'] => '.',
+      '+' => ''
+    ) // assumes validation that plus sign only possible as leading already has been done 
+  );
+  return $value;
+}
 
 /**
  * Implements hook_field_settings_form().
@@ -58,7 +379,11 @@ function amount_field_settings_form($field, $instance, $has_data) {
   $form['thousand_separator'] = array(
     '#type' => 'select',
     '#title' => t('Thousands marker'),
-    '#options' => array('.' => t('Decimal point'), ',' => t('Comma'), ' ' => t('Space')),
+    '#options' => array(
+      '.' => t('Decimal point'),
+      ',' => t('Comma'),
+      ' ' => t('Space')
+    ),
     '#default_value' => $settings['thousand_separator'],
     '#description' => t('The character used to mark the thousands in forms.'),
   );
@@ -66,48 +391,6 @@ function amount_field_settings_form($field, $instance, $has_data) {
   return $form;
 }
 
-/*
- * Generate a list of allowed units
- */
-function amount_defined_units( $types=NULL ) {
-  $permutations = array(
-    'AMT' => array( '1x'  => array( 'ea' => array() ),
-                    '12x' => array( 'doz' => array() ) ),
-    'CUR' => array( 'USD' => array( '$' => array() ),
-                    'GBP' => array( '£' => array() ),
-                    'EUR' => array( '€' => array() ),
-                    'AUD' => array( '$' => array() ) ),
-    'LEN' => array( 'SI'  => array( 'm' => array( 'k', '', 'c', 'm', 'u', 'n' ) ),
-                    'in'  => array( '"' => array() ),
-                    'ft'  => array( "'" => array() ),
-                    'mi'  => array( 'mi' => array() ) ),
-    'MAS' => array( 'lb'  => array( '#' => array() ),
-                    'SI'  => array( 'g' => array( 'M', 'k', '', 'm' ) ) ),
-    'VOL' => array( 'SI'  => array( 'l' => array( 'k', '', 'm' ) ),
-                    'GAL' => array( 'gal' => array() ) ),
-    'CMP' => array( 'BYT' => array( 'B' => array( '', 'K', 'M', 'G', 'T', 'P' ) ),
-                    'XFR' => array( 'bps' => array( '', 'K', 'M' ) ) ),
-  );
-  $ret = array();
-  if (!$types) {
-    $types = array_keys($permutations);
-  }
-  foreach ($types as $type ) {
-    foreach ($permutations[$type] as $code => $unit) {
-      foreach ($unit as $symbol => $multipliers) {
-        if ($multipliers) {
-          foreach ($multipliers as $multiplier) {
-            $ret[] = $type . '_' . $code . '_' . $symbol . '_' . $multiplier;
-          }
-        }
-        else {
-          $ret[] = $type . '_' . $code . '_' . $symbol . '_';
-        }
-      }
-    }
-  }
-  return array_combine($ret, $ret);
-}
 /**
  * Implements hook_field_instance_settings_form().
  */
@@ -117,7 +400,13 @@ function amount_field_instance_settings_form($field, $instance) {
   $form['precision'] = array(
     '#type' => 'select',
     '#title' => t('Precision'),
-    '#options' => array( '00' => 'Integer', '0c' => '10E-2', '0m' => '10E-3', '0u' => '10E-6', /*'2v' => '2^-20', '2d' => '2^-10'*/ ),
+    '#options' => array(
+      '00' => 'Integer',
+      '0c' => '10E-2',
+      '0m' => '10E-3',
+      '0u' => '10E-6',
+      // Todo: add binary options '2v' => '2^-20', '2d' => '2^-10'
+    ),
     '#default_value' => empty($settings['precision']) ? '0u' : $settings['precision'],
     '#description' => t('The smallest unit of precision.')
   );
@@ -146,21 +435,41 @@ function amount_field_instance_settings_form($field, $instance) {
     '#type' => 'select',
     '#title' => t('Units display'),
     '#multiple' => FALSE,
-    '#options' => array( 'hidden' => t('Not shown'), 'symbolbefore' => t('Symbol before'), 'symbolafter' => t('Symbol after'),
-      'codebefore' => 'Code before', 'codeafter' => 'Code after', 'symcode' => 'symbol amt code', 'codesym' => 'code amt symbol'  ),
-    '#default_value' => $settings['units'],
+    '#options' => amount_unitsdisplay_options(),
+    '#default_value' => $settings['unitsdisplay'],
     '#description' => t("How shall the units be displayed"),
   );
   $form['units'] = array(
     '#type' => 'select',
     '#title' => t('Units types allowed'),
-    '#options' => amount_defined_units(),
-    '#multiple' => FALSE,
+    '#options' => array_combine(amount_defined_units(), amount_defined_units()),
+    '#multiple' => TRUE,
     '#default_value' => $settings['units'],
+    // explode( ' ', $settings['units'] ),
     '#description' => t("Units allowed for this instance"),
+    '#element_validate' => array('_amount_units_validate'),
   );
 
   return $form;
+}
+
+/*
+ * Validates units input. By restricting values to the ones specified in #options, XSS are avoided.
+ */
+function _amount_units_validate($element, &$form_state, $form) {
+  if (!$element['#value']) {
+    if ($element['#required']) {
+      form_error($element, t('Units are required'));
+    }
+  }
+  else {
+    $units = is_array($element['#value']) ? $element['#value'] : array( $element['#value'] );
+    foreach ($units as $code ) {
+      if (!isset($element['#options'][$code])) {
+        form_error($element, t('Invalid units specified.'));
+      }
+    }
+  }
 }
 
 /**
@@ -169,7 +478,7 @@ function amount_field_instance_settings_form($field, $instance) {
  * Possible error codes:
  * - 'number_min': The value is less than the allowed minimum value.
  * - 'number_max': The value is greater than the allowed maximum value.
- * todo: validate code and symbol and incorporate multiplier 
+ * - 'invalid_units': The supplied units are not allowed for this instance.
  */
 function amount_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
   foreach ($items as $delta => $item) {
@@ -177,30 +486,510 @@ function amount_field_validate($entity_type, $entity, $field, $instance, $langco
       if (is_numeric($instance['settings']['min']) && $item['amount'] < $instance['settings']['min']) {
         $errors[$field['field_name']][$langcode][$delta][] = array(
           'error' => 'number_min',
-          'message' => t('%name: the value may be no less than %min.', array('%name' => $instance['label'], '%min' => $instance['settings']['min'])),
+          'message' => t('%name: the value may be no less than %min.', array(
+            '%name' => $instance['label'],
+            '%min' => $instance['settings']['min']
+          )),
         );
       }
       if (is_numeric($instance['settings']['max']) && $item['amount'] > $instance['settings']['max']) {
         $errors[$field['field_name']][$langcode][$delta][] = array(
           'error' => 'number_max',
-          'message' => t('%name: the value may be no greater than %max.', array('%name' => $instance['label'], '%max' => $instance['settings']['max'])),
+          'message' => t('%name: the value may be no greater than %max.', array(
+            '%name' => $instance['label'],
+            '%max' => $instance['settings']['max']
+          )),
+        );
+      }
+      if (!in_array($item['units'], $instance['settings']['units'])) {
+        $errors[$field['field_name']][$langcode][$delta][] = array(
+          'error' => 'invalid_units',
+          'message' => t('%name: the allowed units are $units.', array(
+            '%name' => $instance['label'],
+            '%units' => implode(', ', $instance['settings']['units']),
+          )),
         );
       }
     }
   }
 }
 
-/************************************************************************
- * Field CRUD
+/**
+ * Creates a required, locked instance of an amount field on the specified bundle.
+ *
+ * Shamelessly copied from commerce_price module. This is used to quickly instantiate
+ * an instance and / or its associated field.
+ *
+ * @param $field_name
+ *   The name of the field; if it already exists, a new instance of the existing
+ *     field will be created. For fields governed by the Commerce modules, this
+ *     should begin with commerce_.
+ * @param $entity_type
+ *   The type of entity the field instance will be attached to.
+ * @param $bundle
+ *   The bundle name of the entity the field instance will be attached to.
+ * @param $label
+ *   The label of the field instance.
+ * @param $weight
+ *   The default weight of the field instance widget and display.
+ * @param $units
+ *   An array indicating the allowed amount type, code, symbol, and multiplier.
+ * @param $display
+ *   An array of default display data used for the entity's current view modes.
  */
-require_once 'amount.crud.inc';
+function amount_create_instance($field_name, $entity_type, $bundle, $label, $weight = 0, $units = array('CUR_USD_$_'=>'CUR_USD_$_'), $display = array()) {
+  // Look for or add the specified field to the requested entity bundle.
+  bc_activate_field($field_name);
+  field_cache_clear();
 
-/**************************************************************
- * Formatter / display functionality
- */
-require_once 'amount.display.inc';
+  $field = field_info_field($field_name);
+  $instance = field_info_instance($entity_type, $field_name, $bundle);
 
-/*************************************************
- * Widget functionality
+  if (empty($field)) {
+    $field = array(
+      'field_name' => $field_name,
+      'type' => 'amount',
+      'cardinality' => 1,
+      'entity_types' => array(),
+      'translatable' => FALSE,
+      'locked' => TRUE,
+      'settings' => array(
+        'thousand_separator' => ',',
+        'decimal_separator' => '.'
+      ),
+      'deleted' => 0,
+      'active' => 1,
+      'module' => 'amount',
+      'indexes' => array()
+    ); //
+    field_create_field($field);
+  }
+
+  if (empty($instance)) {
+    $instance = array(
+      'bundle' => $bundle,
+      'default_value' => 0,
+      'deleted' => 0,
+      'description' => '',
+
+      'field_name' => $field_name,
+      'entity_type' => $entity_type,
+
+      'label' => $label,
+      'required' => TRUE,
+      'settings' => array(
+        'max' => '',
+        'min' => '',
+        'precision' => '0u',
+        'minscale' => 2,
+        'unitsdisplay' => 'hidden',
+        'units' => $units,
+        'user_register_form' => FALSE,
+      ),
+
+      'widget' => array(
+        'active' => 0,
+        'module' => 'amount',
+        'type' => 'amount',
+        'weight' => $weight,
+        'settings' => array(),
+      ),
+    );
+
+    $entity_info = entity_get_info($entity_type);
+
+    // Spoof the default view mode and node teaser so its display type is set.
+    $entity_info['view modes'] += array(
+      'default' => array(),
+      // 'node_teaser' => array(),
+    );
+
+    foreach ($entity_info['view modes'] as $view_mode => $data) {
+      $instance['display'][$view_mode] = $display + array(
+          'label' => 'hidden',
+          'module' => 'amount',
+          'type' => 'amount_formatted',
+          'settings' => array(
+            'minscale' => 2,
+            'unitsdisplay' => 'hidden',
+            'scale' => 2
+          ),
+          'weight' => $weight,
+        );
+    }
+
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Implements hook_field_insert().
  */
-require_once 'amount.widget.inc';
+function amount_field_insert($entity_type, $entity, $field, $instance, $langcode, &$items) {
+  $settings = $field['settings'];
+  foreach ($items as $delta => &$item) {
+    if (isset($item['amount'])) {
+      $item['amount'] = amount_unformatted2raw(amount_formatted2unformatted($item['amount'], $settings),
+        $instance['settings']['precision']);
+    }
+  }
+}
+
+/**
+ * Implements hook_field_update().
+ */
+function amount_field_update($entity_type, $entity, $field, $instance, $langcode, &$items) {
+  foreach ($items as $delta => &$item) {
+    if (isset($item['amount'])) {
+      $item['amount'] = amount_unformatted2raw($item['amount'], $instance['settings']['precision']);
+    }
+  }
+}
+
+/**
+ * Implements hook_field_load()
+ */
+function amount_field_load($entity_type, $entities, $field, $instances, $langcode, &$items, $age) {
+  foreach ($items as $delta => &$itemlist) {
+    foreach ($itemlist as $index => &$item) {
+      if (isset($item['amount'])) {
+        $item['amount'] = amount_raw2unformatted($item['amount'], $instances[$delta]['settings']['precision']);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_field_is_empty().
+ */
+function amount_field_is_empty($item, $field) {
+  if (empty($item['amount']) && (string) $item['amount'] !== '0') {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/**
+ * Implements hook_field_formatter_info().
+ * @return array
+ */
+function amount_field_formatter_info() {
+  return array(
+    'amount_formatted' => array(
+      'label' => t('Formatted'),
+      'field types' => array('amount'),
+      'settings' => array(
+        'scale' => 2,
+        'unitsdisplay' => 'symbolafter',
+      ),
+    ),
+    'amount_unformatted' => array(
+      'label' => t('Unformatted'),
+      'field types' => array('amount'),
+      'settings' => array(
+        'minscale' => 2
+      ),
+    ),
+    'amount_raw' => array(
+      'label' => t('Raw'),
+      'field types' => array('amount'),
+      'settings' => array(
+        'minscale' => 7
+      )
+    ),
+  );
+}
+
+/**
+ * Returns a list of units display options
+ * @return array
+ *   associative array indexed by a unitsdisplay code
+ */
+function amount_unitsdisplay_options() {
+  return array(
+    'hidden' => t('Not shown'),
+    'symbolbefore' => t('Symbol before'),
+    'symbolafter' => t('Symbol after'),
+    'symcode' => t('Symbol before, code after'),
+    'codebefore' => t('Code before'),
+    'codeafter' => t('Code after'),
+    'codesym' => t('Code before, symbol after')
+  );
+}
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function amount_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $element = array();
+  switch ($display['type']) {
+    case 'amount_raw':
+    case 'amount_unformatted':
+      $element['minscale'] = array(
+        '#type' => 'select',
+        '#title' => t('Minimum scale'),
+        '#options' => drupal_map_assoc(range(0, 6)),
+        '#default_value' => $settings['minscale']
+      );
+      break;
+    case 'amount_formatted':
+      $element['unitsdisplay'] = array(
+        '#type' => 'select',
+        '#title' => t('How to display units'),
+        '#options' => amount_unitsdisplay_options(),
+        '#default_value' => $settings['unitsdisplay'],
+      );
+      $element['scale'] = array(
+        '#type' => 'select',
+        '#title' => t('Scale'),
+        '#options' => drupal_map_assoc(range(0, 6)),
+        '#default_value' => $settings['scale'],
+        '#description' => t('The number of digits to the right of the decimal.'),
+      );
+      break;
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function amount_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $instance['settings'];
+
+  $summary = array();
+  $testnum = '1234567890';
+  switch ($display['type']) {
+    case 'amount_formatted':
+      $summary[] = amount_unformatted2formatted(
+        amount_raw2unformatted($testnum, $settings['precision'], $settings['minscale']),
+        $display['settings'],
+        !empty($settings['units']) ? array_keys($settings['units'])[0] : 'CUR_USD_$__');
+      $unitsdisplay = amount_unitsdisplay_options();
+      if (!empty($unitsdisplay[$display['settings']['unitsdisplay']])) {
+        $summary[] = t('Display with ' . $unitsdisplay[$display['settings']['unitsdisplay']] . '.');
+      }
+      break;
+    case 'amount_unformatted':
+      $summary[] = amount_raw2unformatted($testnum, $instance['settings']['precision'], $display['settings']['minscale']);
+      break;
+    case 'amount_raw':
+      $summary[] = str_pad($testnum, $display['settings']['minscale'], '0', STR_PAD_LEFT);
+      break;
+  }
+
+  return implode('<br />', $summary);
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function amount_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+
+  switch ($display['type']) {
+    case 'amount_formatted':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array('#markup' => amount_unformatted2formatted($item['amount'], $field['settings'] + $instance['settings'] + $display['settings'], $item['units']));
+      }
+      break;
+
+    case 'amount_unformatted':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array('#markup' => amount_unformatted2unformatted($item['amount'], $display['settings']['minscale']));
+      }
+      break;
+
+    case 'amount_raw':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array('#markup' => amount_unformatted2raw($item['amount'], $instance['settings']['precision'], $display['settings']['minscale']));
+      }
+  }
+
+  return $element;
+}
+
+/**
+ * Implements hook_field_widget_info().
+ */
+function amount_field_widget_info() {
+  return array(
+    'amount' => array(
+      'label' => t('Amount'),
+      'field types' => array('amount'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_widget_form().
+ */
+function amount_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  $settings = $field['settings'];
+  $value = isset($items[$delta]['amount']) ? $items[$delta]['amount'] : $instance['default_value'];
+  $units = isset($items[$delta]['units']) ? $items[$delta]['units'] : '';
+  $allowedunits = $instance['settings']['units'] ? $instance['settings']['units'] : amount_defined_units();
+
+  // Substitute the decimal separator.
+  if ($value) {
+    $value = strtr($value, array(
+      ',' => $settings['thousand_separator'],
+      '.' => $settings['decimal_separator']
+    ));
+  }
+  $prefixsuffix = amount_prefixsuffix($instance['settings']['unitsdisplay'], $units);
+
+  $element['amount'] = array(
+    '#type' => 'textfield',
+    '#title' => $instance['label'],
+    '#default_value' => $value,
+    '#size' => 15,
+    '#maxlength' => 25,
+    '#element_validate' => array('amount_field_widget_validate')
+  );
+  $element['amount'] += $prefixsuffix;
+
+  if (!$allowedunits || count($allowedunits) == 1) {
+    $element['units'] = array(
+      '#type' => 'value',
+      '#default_value' => $allowedunits ? array_keys($allowedunits)[0] : '',
+      '#element_validate' => array('_amount_units_validate'),
+    );
+    $element['amount'] += $prefixsuffix;
+  }
+  else {
+    $element['units'] = array(
+      '#type' => 'select',
+      '#multiple' => FALSE,
+      '#default_value' => $units,
+      '#options' => array_combine($allowedunits, $allowedunits),
+      '#element_validate' => array('_amount_units_validate'),
+    );
+  }
+  $element['amount']['#custom']['field']['settings'] = $field['settings'];
+  $element['amount']['#custom']['instance']['label'] = $instance['label'];
+  return $element;
+}
+
+/**
+ * FAPI validation of an individual number element.
+ */
+function amount_field_widget_validate($element, &$form_state) {
+  $fieldsettings = $element['#custom']['field']['settings']; // field_widget_field($element, $form_state);
+  $value = $element['#value'];
+
+  // Reject invalid characters.
+  if (!empty($value)) {
+    $match = array();
+    if (($decimal = $fieldsettings['decimal_separator']) == '.') {
+      $thousands = $fieldsettings['thousand_separator'] ? $fieldsettings['thousand_separator'] : ',';
+    }
+    else {
+      $thousands = $fieldsettings['thousand_separator'] ? $fieldsettings['thousand_separator'] : '.';
+    }
+    $matchstr = '/^([\D]*?)([+-]?(((\d{1,3})((\\' . $thousands . '\d{3}))*)|(\d*))(\\' . $decimal . '\d*)?)(\D*)$/';
+    if (preg_match($matchstr, $value, $match) === FALSE) {
+      amount_field_widget_error($element, array('message' => t('Number expected.')));
+    }
+    else { // todo: figure out best place to convert to unformatted form, leaving here for now.
+      $value = amount_formatted2unformatted($match[2], array(
+        'thousand_separator' => $thousands,
+        'decimal_separator' => $decimal
+      ));
+      form_set_value($element, $value, $form_state);
+    }
+  }
+}
+
+/**
+ * Implements hook_field_widget_error().
+ */
+function amount_field_widget_error($element, $error) {
+  form_error($element['amount'], $error['message']);
+}
+
+/*
+ * Feeds functionality
+ */
+
+/**
+ * Implements hook_feeds_processor_targets_alter().
+ *
+ * @see FeedsNodeProcessor::getMappingTargets().
+ */
+function amount_feeds_processor_targets_alter(&$targets, $entity_type, $bundle_name) {
+  foreach (field_info_instances($entity_type, $bundle_name) as $name => $instance) {
+    $info = field_info_field($name);
+    if ($info['type'] == 'amount') {
+      $targets[$name . ":amount"] = array(
+        'name' => $instance['label'] . ': Amount',
+        'callback' => 'amount_feeds_set_target',
+        'description' => t('The amount value for the @name field.', array('@name' => $instance['label'])),
+        'real_target' => $name,
+      );
+      $targets[$name . ":units"] = array(
+        'name' => $instance['label'] . ': Units',
+        'callback' => 'amount_feeds_set_target',
+        'description' => t('The units for the @name field.', array('@name' => $instance['label'])),
+        'real_target' => $name,
+      );
+    }
+  }
+}
+
+/**
+ * Callback for mapping. Here is where the actual mapping happens.
+ *
+ * When the callback is invoked, $target contains the name of the field the
+ * user has decided to map to and $value contains the value of the feed item
+ * element the user has picked as a source.
+ */
+function amount_feeds_set_target($source, $entity, $target, $value) {
+  if (!isset($value)) {
+    return;
+  }
+
+  // Handle non-multiple value fields.
+  if (!is_array($value)) {
+    $value = array($value);
+  }
+
+  // Get field information.
+  list($field_name, $sub_field) = explode(':', $target);
+  $info = field_info_field($field_name);
+  $field = isset($entity->$field_name) ? $entity->$field_name : array();
+  $config = $source->importer->getConfig();
+  $entity_type = $source->importer->processor->entityType();
+
+  $units = '';
+  if ($sub_field == 'amount') {
+    $info_instance = field_info_instance($entity_type, $field_name, $entity->type);
+    if (isset($info_instance['settings']['units'])) {
+      $units = $info_instance['settings']['units'];
+    }
+  }
+
+  // Iterate over all values.
+  foreach ($value as $i => $v) {
+    if (!is_array($v) && !is_object($v)) {
+      if ($sub_field == 'amount') {
+        $field[LANGUAGE_NONE][$i]['amount'] = (!empty($v) && is_numeric($v)) ? trim($v) : 0;
+        if (!isset($field[LANGUAGE_NONE][$i]['units'])) {
+          $field[LANGUAGE_NONE][$i]['units'] = $units;
+        }
+      }
+      elseif ($sub_field == 'units') {
+        $field[LANGUAGE_NONE][$i]['units'] = $v;
+      }
+    }
+    if ($info['cardinality'] == 1) {
+      break;
+    }
+  }
+
+  $entity->{$field_name} = $field;
+}
