@@ -22,7 +22,6 @@ function amount_help($path, $arg) {
  * Implements hook_hook_info().
  */
 function amount_hook_info() {
-
 }
 
 /**
@@ -72,9 +71,10 @@ function amount_defined_units() {
   $permutations = &drupal_static(__FUNCTION__, array());
 
   if (empty($permutations)) {
-    if( $cache = cache_get(__FUNCTION__) ) {
+    if ($cache = cache_get(__FUNCTION__)) {
       $permutations = $cache->data;
-    } else {
+    }
+    else {
       $mappings = array(
         'AMT' => array(
           '1x' => array('ea' => array()),
@@ -108,7 +108,7 @@ function amount_defined_units() {
 /**
  * Implements hook_amount_mapping_alter()
  */
-function amount_amount_mapping_alter( &$mapping ) {
+function amount_amount_mapping_alter(&$mapping) {
   $mappingstoadd = array(
     'CUR' => array(
       'USD' => array('$' => array()),
@@ -463,8 +463,8 @@ function _amount_units_validate($element, &$form_state, $form) {
     }
   }
   else {
-    $units = is_array($element['#value']) ? $element['#value'] : array( $element['#value'] );
-    foreach ($units as $code ) {
+    $units = is_array($element['#value']) ? $element['#value'] : array($element['#value']);
+    foreach ($units as $code) {
       if (!isset($element['#options'][$code])) {
         form_error($element, t('Invalid units specified.'));
       }
@@ -481,7 +481,7 @@ function _amount_units_validate($element, &$form_state, $form) {
  * - 'invalid_units': The supplied units are not allowed for this instance.
  */
 function amount_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
-  foreach ($items as $delta => $item) {
+  foreach ($items as $delta => $item) { // why is $item['units'] array?
     if ($item['amount'] != '') {
       if (is_numeric($instance['settings']['min']) && $item['amount'] < $instance['settings']['min']) {
         $errors[$field['field_name']][$langcode][$delta][] = array(
@@ -501,14 +501,23 @@ function amount_field_validate($entity_type, $entity, $field, $instance, $langco
           )),
         );
       }
-      if (!in_array($item['units'], $instance['settings']['units'])) {
-        $errors[$field['field_name']][$langcode][$delta][] = array(
-          'error' => 'invalid_units',
-          'message' => t('%name: the allowed units are $units.', array(
-            '%name' => $instance['label'],
-            '%units' => implode(', ', $instance['settings']['units']),
-          )),
-        );
+      if ($item['units']) {
+        if (count($instance['settings']['units'])) {
+          if (!in_array($item['units'], $instance['settings']['units'])) {
+            $errors[$field['field_name']][$langcode][$delta][] = array(
+              'error' => 'invalid_units',
+              'message' => t('%name: the allowed units are %units.', array(
+                '%name' => $instance['label'],
+                '%units' => implode(', ', $instance['settings']['units']),
+              )),
+            );
+          }
+        }
+      }
+      else {
+        if (isset($instance['settings']['units']) && count(isset($instance['settings']['units']))) {
+          $item['units'] = reset($instance['settings']['units']);
+        }
       }
     }
   }
@@ -537,7 +546,7 @@ function amount_field_validate($entity_type, $entity, $field, $instance, $langco
  * @param $display
  *   An array of default display data used for the entity's current view modes.
  */
-function amount_create_instance($field_name, $entity_type, $bundle, $label, $weight = 0, $units = array('CUR_USD_$_'=>'CUR_USD_$_'), $display = array()) {
+function amount_create_instance($field_name, $entity_type, $bundle, $label, $weight = 0, $units = array(), $display = array()) {
   // Look for or add the specified field to the requested entity bundle.
   bc_activate_field($field_name);
   field_cache_clear();
@@ -583,7 +592,7 @@ function amount_create_instance($field_name, $entity_type, $bundle, $label, $wei
         'precision' => '0u',
         'minscale' => 2,
         'unitsdisplay' => 'hidden',
-        'units' => $units,
+        'units' => $units ? array_combine($units, $units) : array(),
         'user_register_form' => FALSE,
       ),
 
@@ -768,7 +777,7 @@ function amount_field_formatter_settings_summary($field, $instance, $view_mode) 
       $summary[] = amount_unformatted2formatted(
         amount_raw2unformatted($testnum, $settings['precision'], $settings['minscale']),
         $display['settings'],
-        !empty($settings['units']) ? array_keys($settings['units'])[0] : 'CUR_USD_$__');
+        !empty($settings['units']) ? array_keys($settings['units'])[0] : 'CUR_USD_$_');
       $unitsdisplay = amount_unitsdisplay_options();
       if (!empty($unitsdisplay[$display['settings']['unitsdisplay']])) {
         $summary[] = t('Display with ' . $unitsdisplay[$display['settings']['unitsdisplay']] . '.');
@@ -969,7 +978,7 @@ function amount_feeds_set_target($source, $entity, $target, $value) {
   if ($sub_field == 'amount') {
     $info_instance = field_info_instance($entity_type, $field_name, $entity->type);
     if (isset($info_instance['settings']['units'])) {
-      $units = $info_instance['settings']['units'];
+      $units = reset($info_instance['settings']['units']);
     }
   }
 
