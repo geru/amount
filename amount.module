@@ -49,6 +49,48 @@ function amount_field_info() {
       ),
       'default_widget' => 'amount',
       'default_formatter' => 'amount_formatted',
+      'property_callbacks' => array('amount_property_info_callback'),
+    ),
+  );
+}
+
+/**
+ * Alters property info of amount fields.
+ *
+ * @see hook_field_info()
+ */
+function amount_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
+  $name = $field['field_name'];
+  $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
+
+  $property['label'] = 'Amount'; // todo: is there more than this? instance based?
+  $property['type'] = ($field['cardinality'] != 1) ? 'list<amount>' : 'amount';
+  $property['getter callback'] = 'entity_metadata_field_verbatim_get';
+  $property['setter callback'] = 'entity_metadata_field_verbatim_set';
+  $property['field'] = TRUE;
+  $property['property info'] = amount_field_data_property_info();
+
+  unset($property['query callback']);
+}
+
+/**
+ * Defines info for the properties of youtube field data.
+ */
+function amount_field_data_property_info($name = NULL) {
+  return array(
+    'amount' => array(
+      'label' => t('Amount value'),
+      'description' => t('The amount adjusted to precision'),
+      'type' => 'decimal',
+      'getter callback' => 'entity_property_verbatim_get',
+      'setter callback' => 'entity_property_verbatim_set',
+    ),
+    'units' => array(
+      'label' => t('Units'),
+      'description' => t('The units of the amount'),
+      'type' => 'text',
+      'getter callback' => 'entity_property_verbatim_get',
+      'setter callback' => 'entity_property_verbatim_set',
     ),
   );
 }
@@ -78,7 +120,8 @@ function amount_defined_units() {
       $mappings = array(
         'AMT' => array(
           '1x' => array('ea' => array()),
-          '12x' => array('doz' => array())
+          '12x' => array('doz' => array() ),
+          'PCT' => array('%' => array() ),
         ),
       );
       // Allow modules to alter the mapping array.
@@ -114,13 +157,22 @@ function amount_amount_mapping_alter(&$mapping) {
       'USD' => array('$' => array()),
       'GBP' => array('£' => array()),
       'EUR' => array('€' => array()),
-      'AUD' => array('$' => array())
+      'AUD' => array('$' => array()),
+      'CAD' => array('$' => array()),
+      'CHF' => array('CHF' => array()),
+      'INR' => array('₹' => array()),
+      'NZD' => array('$' => array()),
+      'JPY' => array('¥' => array()),
+      'ZAR' => array('R' => array()),
+      'MYR' => array('RM' => array()),
+      'CNY' => array('¥' => array()),
+      'SGD' => array('$' => array()),
     ),
     'LEN' => array(
       'SI' => array('m' => array('k', '', 'c', 'm', 'u', 'n')),
-      'in' => array('"' => array()),
+      'inch' => array('"' => array()),
       'ft' => array("'" => array()),
-      'mi' => array('mi' => array())
+      'mile' => array('mi' => array())
     ),
     'MAS' => array(
       'lb' => array('#' => array()),
@@ -135,8 +187,25 @@ function amount_amount_mapping_alter(&$mapping) {
       'XFR' => array('bps' => array('', 'K', 'M'))
     ),
     'TIM' => array(
-      'sec' => array('s' => array('', 'm'))
+      'sec' => array('s' => array('', 'm')),
+      'hour' => array('hr' => array()),
+      'day' => array('d' => array()),
+      'week' => array('wk' => array()),
     ),
+    'TMP' => array(
+      'FAR' => array('F' => array()),
+      'CLS' => array('C' => array()),
+      'KEL' => array('K' => array())
+    ),
+    'PRE' => array(
+      'US' => array('psi' => array('k', '', 'm')),
+      'SI' => array('Pa' => array('M', 'k')),
+      'BAR' => array('bar' => array()),
+      'ATM' => array('atm' => array()),
+      'TOR' => array('Torr' => array()),
+    ),
+
+
   );
   $mapping += $mappingstoadd;
 }
