@@ -270,7 +270,7 @@ function amount_prefixsuffix($unitsdisplay, $units) {
  * @return string
  *   The unformatted number as a PHP string
  */
-function amount_raw2unformatted(int $raw, $precision, int $minscale = 2) {
+function amount_raw2unformatted(int $raw, $precision, $minscale = 2) {
   switch ($precision) {
     case '00':
       $ret = (string) $raw;
@@ -314,7 +314,7 @@ function amount_raw2unformatted(int $raw, $precision, int $minscale = 2) {
  * @return string
  *   The original Amount formatted with at least minscale digits right of decimal
  */
-function amount_unformatted2unformatted($orig, int $minscale = 2) {
+function amount_unformatted2unformatted($orig, $minscale = 2) {
   $amount = explode('.', $orig);
   if (!$amount[0]) {
     $amount[0] = '0';
