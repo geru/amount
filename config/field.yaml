@@ -1,0 +1,209 @@
+amount:
+  machine: &machine amount
+  defaults:
+    label: &label !t Amount
+    description: &description !t This field stores a number in the database as a 64-bit integer with associated units and scale.
+    settings: &settings
+      decimal_separator: "."
+      thousand_separator: ","
+    instance_settings: &instance_settings
+      precision: "0u"
+      minscale: 2
+      min: ""
+      max: ""
+      unitsdisplay: hidden
+      units: NULL
+
+  definition:
+    field_info:
+      *machine:
+        label: *label
+        description: *description
+        settings: *settings
+        instance_settings: *instance_settings
+        default_widget: amount
+        default_formatter: amount_formatted
+        property_callbacks: [ y__field_property_info_callback ]
+
+    property_info:
+      label: *label
+      type: *machine
+      getter callback: entity_metadata_field_verbatim_get
+      setter callback: entity_metadata_field_verbatim_set
+      field: true
+      property info:
+        amount:
+          label: !t Amount value
+          description: !t amount adjusted to precision
+          type: decimal
+          getter callback: entity_property_verbatim_get
+          setter callback: entity_property_verbatim_set
+        units:
+          label: !t Units
+          description: !t units of the amount
+          type: text
+          getter callback: entity_property_verbatim_get
+          setter callback: entity_property_verbatim_set
+
+    field_formatter_info:
+      amount_formatted:
+        label: !t Formatted
+        field types: [ *machine ]
+        settings:
+          scale: 2
+          unitsdisplay: symbolafter
+      amount_unformatted:
+        label: !t Unformatted
+        field types: [ *machine ]
+        settings:
+          minscale: 2
+      amount_raw:
+        label: !t Raw
+        field types: [ *machine ]
+        settings:
+          minscale: 7
+
+    field_widget_info:
+      amount:
+        label: *label
+        field types: [ *machine ]
+
+    create_field: # used to define a default field
+      type: *machine
+      cardinality: 1
+      entity_types: []
+      translatable: false
+      locked: true
+      deleted: 0
+      active: 1
+      module: amount
+      indexes: []
+
+    create_instance:
+      default_value: 0
+      deleted: 0
+      description:
+      required: true
+    
+    field_settings_form:
+      decimal_separator:
+        '#type': select
+        '#title': !t Decimal marker
+        '#options': 
+           '.': !t Decimal point
+           ',': !t Comma
+        '#description': !t The character users will input to mark the decimal point in forms.
+      thousand_separator:
+        '#type': select
+        '#title': !t Thousands marker
+        '#options':
+          '.': !t Decimal point
+          ',': !t Comma
+          ' ': !t Space
+        '#description': !t The character used to mark the thousands in forms.
+
+    unitsdisplay_options: &unitsdisplay_options
+      hidden: Not shown
+      symbolbefore: !t Symbol before
+      symbolafter: !t Symbol after
+      symcode: !t Symbol before, code after
+      codebefore: !t Code before
+      codeafter: !t Code after
+      codesym: !t Code before, symbol after
+
+    units_mappings: &units_mappings !call
+    - _amount_expand_units_permutations
+    - AMT:
+        1x: { ea: [] }
+        12x: { doz: [] }
+        PCT: { '%': [] }
+      CUR:
+        USD: { $: [] }
+        GBP: { "\xA3": [] }
+        EUR: { "\u20AC": [] }
+        AUD: { $: [] }
+        CAD: { $: [] }
+        CHF: { CHF: [] }
+        INR: { "\u20B9": [] }
+        NZD: { $: [] }
+        JPY: { "\xA5": [] }
+        ZAR: { R: [] }
+        MYR: { RM: [] }
+        CNY: { "\xA5": [] }
+        SGD: { $: [] }
+      LEN:
+        SI:   { m: [ k, "", c, m, u, n ] }
+        inch: { '"': [] }
+        ft:   { '''': [] }
+        mile: { mi: [] }
+      MAS:
+        lb: { '#': [] }
+        SI: { g: [ M, k, "", m ] }
+      VOL:
+        SI: { l: [ k, "", m ] }
+        GAL: { gal: [] }
+      CMP:
+        BYT: { B: [ "", K, M, G, T, P ] }
+        XFR: { bps: [ "", K, M ] }
+      TIM:
+        sec: { s: [ "", m ] }
+        hour: { hr: [] }
+        day: { d: [] }
+        week: { wk: [] }
+      TMP:
+        FAR: { F: [] }
+        CLS: { C: [] }
+        KEL: { K: [] }
+      PRE:
+        US: { psi: [ k, "", m ] }
+        SI: { Pa: [ M, k ] }
+        BAR: { bar: [] }
+        ATM: { atm: [] }
+        TOR: { Torr: [] }
+
+    field_instance_settings_form:
+      precision:
+        '#type': select
+        '#title': !t Precision
+        '#options':
+          '00': !t Integer
+          '0c': '10E-2'
+          '0m': '10E-3'
+          '0u': '10E-6'
+          # Todo: add binary options '2v': '2^-20', '2d': '2^-10'
+        '#default_value': '0u'
+        '#description': !t The smallest unit of precision.
+      minscale:
+        '#type': select
+        '#title': !t Minimum scale
+        '#options': [ 0, 1, 2, 3, 4, 5, 6 ]
+        '#default_value': 0
+        '#description': !t The minimum number of digits to show to the right of the decimal (unformatted).
+      min:
+        '#type': textfield
+        '#title': !t Minimum
+        '#description': !t The minimum value that should be allowed in this field. Leave blank for no minimum.
+        '#element_validate': [ element_validate_number ]
+      max:
+        '#type': textfield
+        '#title': !t Maximum
+        '#description': !t The maximum value that should be allowed in this field. Leave blank for no maximum.
+        '#element_validate': [ element_validate_number ]
+      unitsdisplay:
+        '#type': select
+        '#title': !t Units display
+        '#multiple': false
+        '#options': *unitsdisplay_options
+        '#description': !t How shall the units be displayed
+      units:
+        '#type': select
+        '#title': !t Units types allowed
+        '#options': *units_mappings
+        '#multiple': true
+        '#description': !t Units allowed for this instance
+        '#element_validate': [ _amount_units_validate ]
+       
+    help:
+      h3: !t About
+      p: !t The Amount module defines a numeric field type for the Field module.
+      p: !t Amounts are in 64-bit integer form, and they can be formatted when displayed. Amount fields can be limited to a specific set of input values or to a range of values. See the <a href="admin/help/field">Field module help page</a> for more information about fields.

@@ -12,87 +12,22 @@ function amount_help($path, $arg) {
   switch ($path) {
     case 'admin/help#amount':
       $output = '';
-      $output .= '<h3>' . t('About') . '</h3>';
-      $output .= '<p>' . t('The Amount module defines a numeric field type for the Field module. Amounts are in 64-bit integer form, and they can be formatted when displayed. Amount fields can be limited to a specific set of input values or to a range of values. See the <a href="@field-help">Field module help page</a> for more information about fields.', array('@field-help' => url('admin/help/field'))) . '</p>';
+      foreach( y__protocol_field('amount', 'help') as $tag => $text ) {
+        $output .= "<$tag>" . $text . "</$tag>";
+      }
       return $output;
   }
 }
 
-/**
- * Implements hook_hook_info().
- */
-function amount_hook_info() {
+function amount_y() {
+  return array( 'field' );
 }
 
 /**
  * Implements hook_field_info().
- * Precision:
- *   base 2 measured by 10: 2d=1/(2^10), 2K=2^10, 2v=1/(2^20), 2M=2^20
- *   base 10 measured by 3: 0k=1000, 0m=1/1000, 0M=1000000, 0u=1/1000000
  */
 function amount_field_info() {
-  return array(
-    'amount' => array(
-      'label' => t('Amount'),
-      'description' => t('This field stores a number in the database as a 64-bit integer with associated units and scale.'),
-      'settings' => array(
-        'decimal_separator' => '.',
-        'thousand_separator' => ','
-      ),
-      'instance_settings' => array(
-        'precision' => '0u',
-        'minscale' => 0,
-        'min' => '',
-        'max' => '',
-        'unitsdisplay' => 'hidden',
-        'units' => NULL
-      ),
-      'default_widget' => 'amount',
-      'default_formatter' => 'amount_formatted',
-      'property_callbacks' => array('amount_property_info_callback'),
-    ),
-  );
-}
-
-/**
- * Alters property info of amount fields.
- *
- * @see hook_field_info()
- */
-function amount_property_info_callback(&$info, $entity_type, $field, $instance, $field_type) {
-  $name = $field['field_name'];
-  $property = &$info[$entity_type]['bundles'][$instance['bundle']]['properties'][$name];
-
-  $property['label'] = 'Amount'; // todo: is there more than this? instance based?
-  $property['type'] = ($field['cardinality'] != 1) ? 'list<amount>' : 'amount';
-  $property['getter callback'] = 'entity_metadata_field_verbatim_get';
-  $property['setter callback'] = 'entity_metadata_field_verbatim_set';
-  $property['field'] = TRUE;
-  $property['property info'] = amount_field_data_property_info();
-
-  unset($property['query callback']);
-}
-
-/**
- * Defines info for the properties of youtube field data.
- */
-function amount_field_data_property_info($name = NULL) {
-  return array(
-    'amount' => array(
-      'label' => t('Amount value'),
-      'description' => t('The amount adjusted to precision'),
-      'type' => 'decimal',
-      'getter callback' => 'entity_property_verbatim_get',
-      'setter callback' => 'entity_property_verbatim_set',
-    ),
-    'units' => array(
-      'label' => t('Units'),
-      'description' => t('The units of the amount'),
-      'type' => 'text',
-      'getter callback' => 'entity_property_verbatim_get',
-      'setter callback' => 'entity_property_verbatim_set',
-    ),
-  );
+  return y__protocol_field('amount', 'field_info');
 }
 
 /*
@@ -107,9 +42,7 @@ function amount_field_data_property_info($name = NULL) {
  *       symbol is a common symbol for code
  *       multiplierN is a multiplier used with this symbol, and '' if code with multiplier of one
  */
-/**
- */
-function amount_defined_units() {
+function _amount_expand_units_permutations( $mappings=null ) {
   $permutations = &drupal_static(__FUNCTION__, array());
 
   if (empty($permutations)) {
@@ -117,15 +50,7 @@ function amount_defined_units() {
       $permutations = $cache->data;
     }
     else {
-      $mappings = array(
-        'AMT' => array(
-          '1x' => array('ea' => array()),
-          '12x' => array('doz' => array() ),
-          'PCT' => array('%' => array() ),
-        ),
-      );
-      // Allow modules to alter the mapping array.
-      drupal_alter('amount_mapping', $mappings);
+      drupal_alter('units_mapping', $mappings);
 
       foreach ($mappings as $type => $info) {
         foreach ($info as $code => $unitsdef) {
@@ -145,69 +70,15 @@ function amount_defined_units() {
     }
   }
 
-  return $permutations;
+  return array_combine( $permutations, $permutations );
 }
 
 /**
- * Implements hook_amount_mapping_alter()
+ * Return a list of the defined units as forms options list
+ * @return mixed
  */
-function amount_amount_mapping_alter(&$mapping) {
-  $mappingstoadd = array(
-    'CUR' => array(
-      'USD' => array('$' => array()),
-      'GBP' => array('£' => array()),
-      'EUR' => array('€' => array()),
-      'AUD' => array('$' => array()),
-      'CAD' => array('$' => array()),
-      'CHF' => array('CHF' => array()),
-      'INR' => array('₹' => array()),
-      'NZD' => array('$' => array()),
-      'JPY' => array('¥' => array()),
-      'ZAR' => array('R' => array()),
-      'MYR' => array('RM' => array()),
-      'CNY' => array('¥' => array()),
-      'SGD' => array('$' => array()),
-    ),
-    'LEN' => array(
-      'SI' => array('m' => array('k', '', 'c', 'm', 'u', 'n')),
-      'inch' => array('"' => array()),
-      'ft' => array("'" => array()),
-      'mile' => array('mi' => array())
-    ),
-    'MAS' => array(
-      'lb' => array('#' => array()),
-      'SI' => array('g' => array('M', 'k', '', 'm'))
-    ),
-    'VOL' => array(
-      'SI' => array('l' => array('k', '', 'm')),
-      'GAL' => array('gal' => array())
-    ),
-    'CMP' => array(
-      'BYT' => array('B' => array('', 'K', 'M', 'G', 'T', 'P')),
-      'XFR' => array('bps' => array('', 'K', 'M'))
-    ),
-    'TIM' => array(
-      'sec' => array('s' => array('', 'm')),
-      'hour' => array('hr' => array()),
-      'day' => array('d' => array()),
-      'week' => array('wk' => array()),
-    ),
-    'TMP' => array(
-      'FAR' => array('F' => array()),
-      'CLS' => array('C' => array()),
-      'KEL' => array('K' => array())
-    ),
-    'PRE' => array(
-      'US' => array('psi' => array('k', '', 'm')),
-      'SI' => array('Pa' => array('M', 'k')),
-      'BAR' => array('bar' => array()),
-      'ATM' => array('atm' => array()),
-      'TOR' => array('Torr' => array()),
-    ),
-
-
-  );
-  $mapping += $mappingstoadd;
+function amount_defined_units_options() {
+  return y__protocol_field('amount', 'units_mappings');
 }
 
 /**
@@ -436,27 +307,10 @@ function amount_formatted2unformatted($value, $display = array(
  * Implements hook_field_settings_form().
  */
 function amount_field_settings_form($field, $instance, $has_data) {
-  $settings = $field['settings'];
-  $form = array();
-  $form['decimal_separator'] = array(
-    '#type' => 'select',
-    '#title' => t('Decimal marker'),
-    '#options' => array('.' => t('Decimal point'), ',' => t('Comma')),
-    '#default_value' => $settings['decimal_separator'],
-    '#description' => t('The character users will input to mark the decimal point in forms.'),
-  );
-  $form['thousand_separator'] = array(
-    '#type' => 'select',
-    '#title' => t('Thousands marker'),
-    '#options' => array(
-      '.' => t('Decimal point'),
-      ',' => t('Comma'),
-      ' ' => t('Space')
-    ),
-    '#default_value' => $settings['thousand_separator'],
-    '#description' => t('The character used to mark the thousands in forms.'),
-  );
-
+  $form = y__protocol_field('amount', 'field_settings_form');
+  foreach( $field['settings'] as $key => $setting ) {
+    $form[$key]['#default_value'] = $setting;
+  }
   return $form;
 }
 
@@ -464,61 +318,10 @@ function amount_field_settings_form($field, $instance, $has_data) {
  * Implements hook_field_instance_settings_form().
  */
 function amount_field_instance_settings_form($field, $instance) {
-  $settings = $instance['settings'];
-
-  $form['precision'] = array(
-    '#type' => 'select',
-    '#title' => t('Precision'),
-    '#options' => array(
-      '00' => 'Integer',
-      '0c' => '10E-2',
-      '0m' => '10E-3',
-      '0u' => '10E-6',
-      // Todo: add binary options '2v' => '2^-20', '2d' => '2^-10'
-    ),
-    '#default_value' => empty($settings['precision']) ? '0u' : $settings['precision'],
-    '#description' => t('The smallest unit of precision.')
-  );
-  $element['minscale'] = array(
-    '#type' => 'select',
-    '#title' => t('Minimum scale'),
-    '#options' => drupal_map_assoc(range(0, 6)),
-    '#default_value' => $settings['minscale'],
-    '#description' => t('The minimum number of digits to show to the right of the decimal (unformatted).'),
-  );
-  $form['min'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Minimum'),
-    '#default_value' => $settings['min'],
-    '#description' => t('The minimum value that should be allowed in this field. Leave blank for no minimum.'),
-    '#element_validate' => array('element_validate_number'),
-  );
-  $form['max'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Maximum'),
-    '#default_value' => $settings['max'],
-    '#description' => t('The maximum value that should be allowed in this field. Leave blank for no maximum.'),
-    '#element_validate' => array('element_validate_number'),
-  );
-  $form['unitsdisplay'] = array(
-    '#type' => 'select',
-    '#title' => t('Units display'),
-    '#multiple' => FALSE,
-    '#options' => amount_unitsdisplay_options(),
-    '#default_value' => $settings['unitsdisplay'],
-    '#description' => t("How shall the units be displayed"),
-  );
-  $form['units'] = array(
-    '#type' => 'select',
-    '#title' => t('Units types allowed'),
-    '#options' => array_combine(amount_defined_units(), amount_defined_units()),
-    '#multiple' => TRUE,
-    '#default_value' => $settings['units'],
-    // explode( ' ', $settings['units'] ),
-    '#description' => t("Units allowed for this instance"),
-    '#element_validate' => array('_amount_units_validate'),
-  );
-
+  $form = y__protocol_field('amount', 'field_instance_settings_form');
+  foreach( $instance['settings'] as $key => $setting ) {
+    $form[$key]['#default_value'] = $setting;
+  }
   return $form;
 }
 
@@ -618,63 +421,25 @@ function amount_field_validate($entity_type, $entity, $field, $instance, $langco
  *   An array of default display data used for the entity's current view modes.
  */
 function amount_create_instance($field_name, $entity_type, $bundle, $label, $weight = 0, $units = array(), $display = array()) {
-  // Look for or add the specified field to the requested entity bundle.
-  bc_activate_field($field_name);
+  y__field_activate( $field_name );
   field_cache_clear();
-
   $field = field_info_field($field_name);
   $instance = field_info_instance($entity_type, $field_name, $bundle);
 
   if (empty($field)) {
-    $field = array(
-      'field_name' => $field_name,
-      'type' => 'amount',
-      'cardinality' => 1,
-      'entity_types' => array(),
-      'translatable' => FALSE,
-      'locked' => TRUE,
-      'settings' => array(
-        'thousand_separator' => ',',
-        'decimal_separator' => '.'
-      ),
-      'deleted' => 0,
-      'active' => 1,
-      'module' => 'amount',
-      'indexes' => array()
-    ); //
+    $field = y__protocol_field('amount', 'create_field');
+    $field['field_name'] = $field_name;
     field_create_field($field);
   }
 
   if (empty($instance)) {
-    $instance = array(
-      'bundle' => $bundle,
-      'default_value' => 0,
-      'deleted' => 0,
-      'description' => '',
-
-      'field_name' => $field_name,
-      'entity_type' => $entity_type,
-
-      'label' => $label,
-      'required' => TRUE,
-      'settings' => array(
-        'max' => '',
-        'min' => '',
-        'precision' => '0u',
-        'minscale' => 2,
-        'unitsdisplay' => 'hidden',
-        'units' => $units ? array_combine($units, $units) : array(),
-        'user_register_form' => FALSE,
-      ),
-
-      'widget' => array(
-        'active' => 0,
-        'module' => 'amount',
-        'type' => 'amount',
-        'weight' => $weight,
-        'settings' => array(),
-      ),
-    );
+    $instance = y__protocol_field('amount', 'create_instance');
+    $instance['field_name'] = $field_name;
+    $instance['bundle'] = $bundle;
+    $instance['entity_type'] = $entity_type;
+    $instance['label'] = $label;
+    $instance['settings']['units'] = $units ? array_combine($units, $units) : array();
+    $instance['widget']['weight'] = $weight;
 
     $entity_info = entity_get_info($entity_type);
 
@@ -687,7 +452,6 @@ function amount_create_instance($field_name, $entity_type, $bundle, $label, $wei
     foreach ($entity_info['view modes'] as $view_mode => $data) {
       $instance['display'][$view_mode] = $display + array(
           'label' => 'hidden',
-          'module' => 'amount',
           'type' => 'amount_formatted',
           'settings' => array(
             'minscale' => 2,
@@ -754,30 +518,7 @@ function amount_field_is_empty($item, $field) {
  * @return array
  */
 function amount_field_formatter_info() {
-  return array(
-    'amount_formatted' => array(
-      'label' => t('Formatted'),
-      'field types' => array('amount'),
-      'settings' => array(
-        'scale' => 2,
-        'unitsdisplay' => 'symbolafter',
-      ),
-    ),
-    'amount_unformatted' => array(
-      'label' => t('Unformatted'),
-      'field types' => array('amount'),
-      'settings' => array(
-        'minscale' => 2
-      ),
-    ),
-    'amount_raw' => array(
-      'label' => t('Raw'),
-      'field types' => array('amount'),
-      'settings' => array(
-        'minscale' => 7
-      )
-    ),
-  );
+  return y__protocol_field('amount', 'field_formatter_info');
 }
 
 /**
@@ -786,15 +527,7 @@ function amount_field_formatter_info() {
  *   associative array indexed by a unitsdisplay code
  */
 function amount_unitsdisplay_options() {
-  return array(
-    'hidden' => t('Not shown'),
-    'symbolbefore' => t('Symbol before'),
-    'symbolafter' => t('Symbol after'),
-    'symcode' => t('Symbol before, code after'),
-    'codebefore' => t('Code before'),
-    'codeafter' => t('Code after'),
-    'codesym' => t('Code before, symbol after')
-  );
+  return y__protocol_field('amount', 'unitsdisplay_options');
 }
 
 /**
@@ -897,12 +630,7 @@ function amount_field_formatter_view($entity_type, $entity, $field, $instance, $
  * Implements hook_field_widget_info().
  */
 function amount_field_widget_info() {
-  return array(
-    'amount' => array(
-      'label' => t('Amount'),
-      'field types' => array('amount'),
-    ),
-  );
+  return y__protocol_field('amount', 'field_widget_info');
 }
 
 /**
@@ -912,7 +640,7 @@ function amount_field_widget_form(&$form, &$form_state, $field, $instance, $lang
   $settings = $field['settings'];
   $value = isset($items[$delta]['amount']) ? $items[$delta]['amount'] : $instance['default_value'];
   $units = isset($items[$delta]['units']) ? $items[$delta]['units'] : '';
-  $allowedunits = $instance['settings']['units'] ? $instance['settings']['units'] : amount_defined_units();
+  $allowedunits = $instance['settings']['units'] ? $instance['settings']['units'] : amount_defined_units_options();
 
   // Substitute the decimal separator.
   if ($value) {
@@ -946,7 +674,7 @@ function amount_field_widget_form(&$form, &$form_state, $field, $instance, $lang
       '#type' => 'select',
       '#multiple' => FALSE,
       '#default_value' => $units,
-      '#options' => array_combine($allowedunits, $allowedunits),
+      '#options' => $allowedunits,
       '#element_validate' => array('_amount_units_validate'),
     );
   }

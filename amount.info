@@ -3,5 +3,6 @@ description = A numerical field type with large range, high precision, and assoc
 package = Fields
 version = VERSION
 core = 7.x
+dependencies[] = y
 dependencies[] = field
 files[] = amount.test
