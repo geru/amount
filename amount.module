@@ -9,16 +9,22 @@
  * Implements hook_help().
  */
 function amount_help($path, $arg) {
+  $ret = NULL;
   switch ($path) {
     case 'admin/help#amount':
-      $output = '';
-      foreach( y__protocol_field('amount', 'help') as $tag => $text ) {
-        $output .= "<$tag>" . $text . "</$tag>";
+      $ret = '';
+      foreach( y__protocol('field', 'help', 'amount')['amount'] as $tag => $text) {
+        $ret .= "<$tag>" . $text . "</$tag>";
       }
-      return $output;
+    break;
   }
+  return $ret;
 }
 
+/**
+ * Implements hook_y()
+ * @return array
+ */
 function amount_y() {
   return array( 'field' );
 }
@@ -27,7 +33,7 @@ function amount_y() {
  * Implements hook_field_info().
  */
 function amount_field_info() {
-  return y__protocol_field('amount', 'field_info');
+  return y__protocol('field', 'field_info', 'amount')['amount'];
 }
 
 /*
@@ -78,7 +84,8 @@ function _amount_expand_units_permutations( $mappings=null ) {
  * @return mixed
  */
 function amount_defined_units_options() {
-  return y__protocol_field('amount', 'units_mappings');
+  $ret = y__protocol( 'field', 'units_mappings', 'amount' )['amount'];
+  return $ret;
 }
 
 /**
@@ -97,29 +104,31 @@ function amount_defined_units_options() {
  * @return array
  *   An associative array with two strings indexed by '#prefix' and '#suffix'
  */
-function amount_prefixsuffix($unitsdisplay, $units) {
-  $unitsvals = $units ? explode('_', $units) : array();
-  $symbol = empty($unitsvals[2]) ? '' : $unitsvals[2];
-  $code = empty($unitsvals[1]) ? '' : $unitsvals[1];
-  $multiplier = empty($unitsvals[1]) ? '' : $unitsvals[3];
+function amount_prefixsuffix($unitsdisplay, $units=NULL) {
   $ret = array('#prefix' => '', '#suffix' => '');
-  switch ($unitsdisplay) {
-    case 'symbolbefore':
-      $ret['#prefix'] = $multiplier . $symbol;
-      break;
-    case 'codesym':
-      $ret['#prefix'] = $code . ' ';
-    case 'symbolafter':
-      $ret['#suffix'] = $multiplier . $symbol;
-      break;
-    case 'codebefore':
-      $ret['#prefix'] = $code . ' ';
-      break;
-    case 'symcode':
-      $ret['#prefix'] = $multiplier . $symbol;
-    case 'codeafter':
-      $ret['#suffix'] = ' ' . $code;
-      break;
+  if( $units ) {
+    $unitsvals = $units ? explode('_', $units) : array();
+    $symbol = empty($unitsvals[2]) ? '' : $unitsvals[2];
+    $code = empty($unitsvals[1]) ? '' : $unitsvals[1];
+    $multiplier = empty($unitsvals[1]) ? '' : $unitsvals[3];
+    switch ($unitsdisplay) {
+      case 'symbolbefore':
+        $ret['#prefix'] = $multiplier . $symbol;
+        break;
+      case 'codesym':
+        $ret['#prefix'] = $code . ' ';
+      case 'symbolafter':
+        $ret['#suffix'] = $multiplier . $symbol;
+        break;
+      case 'codebefore':
+        $ret['#prefix'] = $code . ' ';
+        break;
+      case 'symcode':
+        $ret['#prefix'] = $multiplier . $symbol;
+      case 'codeafter':
+        $ret['#suffix'] = ' ' . $code;
+        break;
+    }
   }
   return $ret;
 }
@@ -268,7 +277,7 @@ function amount_unformatted2formatted($value, $settings = array(
   'decimal_separator' => '.',
   'thousand_separator' => ',',
   'unitsdisplay' => 'symbolbefore'
-), $units = 'CUR_USD_$__') {
+), $units = NULL) {
   $scale = isset($settings['scale']) ? $settings['scale'] : 2;
   $decimal_separator = isset($settings['decimal_separator']) ? $settings['decimal_separator'] : '.';
   $thousand_separator = isset($settings['thousand_separator']) ? $settings['thousand_separator'] : ',';
@@ -307,7 +316,7 @@ function amount_formatted2unformatted($value, $display = array(
  * Implements hook_field_settings_form().
  */
 function amount_field_settings_form($field, $instance, $has_data) {
-  $form = y__protocol_field('amount', 'field_settings_form');
+  $form = y__protocol('field', 'field_settings_form', 'amount')['amount'];
   foreach( $field['settings'] as $key => $setting ) {
     $form[$key]['#default_value'] = $setting;
   }
@@ -318,9 +327,30 @@ function amount_field_settings_form($field, $instance, $has_data) {
  * Implements hook_field_instance_settings_form().
  */
 function amount_field_instance_settings_form($field, $instance) {
-  $form = y__protocol_field('amount', 'field_instance_settings_form');
-  foreach( $instance['settings'] as $key => $setting ) {
-    $form[$key]['#default_value'] = $setting;
+  $form = y__protocol('field', 'field_instance_settings_form', 'amount')['amount'];
+  $settings = $instance['settings'];
+  foreach( $form as $fieldkey => &$fieldinfo ) {
+    if( $fieldkey[0] == '#' ) {
+      continue;
+    }
+    if( $fieldinfo['#type'] == 'fieldset' ) {
+      foreach( $fieldinfo as $subfield => $subfieldinfo ) {
+        if( $subfield[0] == '#' ) {
+          continue;
+        }
+        if( isset( $settings[$subfield]) ) {
+          $subfieldinfo['#default_value'] = $settings[$subfield];
+        }
+      }
+    } else {
+      if( isset( $settings[$fieldkey]) ) {
+        $fieldinfo['#default_value'] = $settings[$fieldkey];
+      }
+    }
+  }
+  if( empty( $field['settings']['use_units'] ) ) {
+    $form['unitsdisplay']['#disabled'] = TRUE;
+    $form['units']['#disabled'] = TRUE;
   }
   return $form;
 }
@@ -337,10 +367,8 @@ function _amount_units_validate($element, &$form_state, $form) {
   else {
     $units = is_array($element['#value']) ? $element['#value'] : array($element['#value']);
     foreach ($units as $code) {
-      if ($element['#value'] != $element['#default_value']) {
-        if (isset($element['#options']) && !isset($element['#options'][$code])) {
-          form_error($element, t('Invalid units specified.'));
-        }
+      if (isset($element['#options']) && !isset($element['#options'][$code])) {
+        form_error($element, t('Invalid units specified.'));
       }
     }
   }
@@ -375,94 +403,27 @@ function amount_field_validate($entity_type, $entity, $field, $instance, $langco
           )),
         );
       }
-      if ($item['units']) {
-        if (count($instance['settings']['units'])) {
-          if (!in_array($item['units'], $instance['settings']['units'])) {
-            $errors[$field['field_name']][$langcode][$delta][] = array(
-              'error' => 'invalid_units',
-              'message' => t('%name: the allowed units are %units.', array(
-                '%name' => $instance['label'],
-                '%units' => implode(', ', $instance['settings']['units']),
-              )),
-            );
+      if( !empty($field['settings']['use_units'])) {
+        if ($item['units']) {
+          if (count($instance['settings']['units'])) {
+            if (!in_array($item['units'], $instance['settings']['units'])) {
+              $errors[$field['field_name']][$langcode][$delta][] = array(
+                'error' => 'invalid_units',
+                'message' => t('%name: the allowed units are %units.', array(
+                  '%name' => $instance['label'],
+                  '%units' => implode(', ', $instance['settings']['units']),
+                )),
+              );
+            }
+          }
+        }
+        else {
+          if (isset($instance['settings']['units']) && count(isset($instance['settings']['units']))) {
+            $item['units'] = reset($instance['settings']['units']);
           }
         }
       }
-      else {
-        if (isset($instance['settings']['units']) && count(isset($instance['settings']['units']))) {
-          $item['units'] = reset($instance['settings']['units']);
-        }
-      }
     }
-  }
-}
-
-/**
- * Creates a required, locked instance of an amount field on the specified bundle.
- *
- * Shamelessly copied from commerce_price module. This is used to quickly instantiate
- * an instance and / or its associated field.
- *
- * @param $field_name
- *   The name of the field; if it already exists, a new instance of the existing
- *     field will be created. For fields governed by the Commerce modules, this
- *     should begin with commerce_.
- * @param $entity_type
- *   The type of entity the field instance will be attached to.
- * @param $bundle
- *   The bundle name of the entity the field instance will be attached to.
- * @param $label
- *   The label of the field instance.
- * @param $weight
- *   The default weight of the field instance widget and display.
- * @param $units
- *   An array indicating the allowed amount type, code, symbol, and multiplier.
- * @param $display
- *   An array of default display data used for the entity's current view modes.
- */
-function amount_create_instance($field_name, $entity_type, $bundle, $label, $weight = 0, $units = array(), $display = array()) {
-  y__field_activate( $field_name );
-  field_cache_clear();
-  $field = field_info_field($field_name);
-  $instance = field_info_instance($entity_type, $field_name, $bundle);
-
-  if (empty($field)) {
-    $field = y__protocol_field('amount', 'create_field');
-    $field['field_name'] = $field_name;
-    field_create_field($field);
-  }
-
-  if (empty($instance)) {
-    $instance = y__protocol_field('amount', 'create_instance');
-    $instance['field_name'] = $field_name;
-    $instance['bundle'] = $bundle;
-    $instance['entity_type'] = $entity_type;
-    $instance['label'] = $label;
-    $instance['settings']['units'] = $units ? array_combine($units, $units) : array();
-    $instance['widget']['weight'] = $weight;
-
-    $entity_info = entity_get_info($entity_type);
-
-    // Spoof the default view mode and node teaser so its display type is set.
-    $entity_info['view modes'] += array(
-      'default' => array(),
-      // 'node_teaser' => array(),
-    );
-
-    foreach ($entity_info['view modes'] as $view_mode => $data) {
-      $instance['display'][$view_mode] = $display + array(
-          'label' => 'hidden',
-          'type' => 'amount_formatted',
-          'settings' => array(
-            'minscale' => 2,
-            'unitsdisplay' => 'hidden',
-            'scale' => 2
-          ),
-          'weight' => $weight,
-        );
-    }
-
-    field_create_instance($instance);
   }
 }
 
@@ -514,25 +475,17 @@ function amount_field_is_empty($item, $field) {
 }
 
 /**
- * Implements hook_field_formatter_info().
- * @return array
- */
-function amount_field_formatter_info() {
-  return y__protocol_field('amount', 'field_formatter_info');
-}
-
-/**
  * Returns a list of units display options
  * @return array
  *   associative array indexed by a unitsdisplay code
  */
 function amount_unitsdisplay_options() {
-  return y__protocol_field('amount', 'unitsdisplay_options');
+  return y__protocol( 'field', 'unitsdisplay_options', 'amount')['amount'];
 }
 
 /**
  * Implements hook_field_formatter_settings_form().
- */
+
 function amount_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
   $display = $instance['display'][$view_mode];
   $settings = $display['settings'];
@@ -565,7 +518,20 @@ function amount_field_formatter_settings_form($field, $instance, $view_mode, $fo
       break;
   }
   return $element;
+} */
+function amount_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $field_formatter_settings_form = y__protocol( 'field', 'field_formatter_settings_form', 'amount')['amount'];
+  $element = $field_formatter_settings_form[$display['type']];
+
+  foreach( $element as $field => &$forminfo ) {
+    $forminfo['#default_value'] = $settings[$field];
+  }
+  return $element;
 }
+
 
 /**
  * Implements hook_field_formatter_settings_summary().
@@ -578,10 +544,12 @@ function amount_field_formatter_settings_summary($field, $instance, $view_mode) 
   $testnum = '1234567890';
   switch ($display['type']) {
     case 'amount_formatted':
+      $units = $settings['units'] ?? NULL;
+      $units = is_array($units) ? key($units) : $units;
       $summary[] = amount_unformatted2formatted(
         amount_raw2unformatted($testnum, $settings['precision'], $settings['minscale']),
         $display['settings'],
-        !empty($settings['units']) ? array_keys($settings['units'])[0] : 'CUR_USD_$_');
+        $units);
       $unitsdisplay = amount_unitsdisplay_options();
       if (!empty($unitsdisplay[$display['settings']['unitsdisplay']])) {
         $summary[] = t('Display with ' . $unitsdisplay[$display['settings']['unitsdisplay']] . '.');
@@ -627,10 +595,21 @@ function amount_field_formatter_view($entity_type, $entity, $field, $instance, $
 }
 
 /**
+ * Implements hook_field_formatter_info().
+ * @return array
+ * This hook function is auto-generated by y.
+ *
+ */
+function amount_field_formatter_info() {
+  return y__protocol( 'field', 'field_formatter_info', 'amount')['amount'];
+}
+
+/**
  * Implements hook_field_widget_info().
+ * This hook function is auto-generated by y.
  */
 function amount_field_widget_info() {
-  return y__protocol_field('amount', 'field_widget_info');
+  return y__protocol( 'field', 'field_widget_info', 'amount')['amount'];
 }
 
 /**
@@ -641,6 +620,10 @@ function amount_field_widget_form(&$form, &$form_state, $field, $instance, $lang
   $value = isset($items[$delta]['amount']) ? $items[$delta]['amount'] : $instance['default_value'];
   $units = isset($items[$delta]['units']) ? $items[$delta]['units'] : '';
   $allowedunits = $instance['settings']['units'] ? $instance['settings']['units'] : amount_defined_units_options();
+  if(  empty($settings['use_units']) ) {
+    $allowedunits = NULL;
+
+  }
 
   // Substitute the decimal separator.
   if ($value) {
@@ -661,7 +644,7 @@ function amount_field_widget_form(&$form, &$form_state, $field, $instance, $lang
   );
   $element['amount'] += $prefixsuffix;
 
-  if (!$allowedunits || count($allowedunits) == 1) {
+  if (count($allowedunits) == 1) {
     $element['units'] = array(
       '#type' => 'value',
       '#default_value' => $allowedunits ? array_keys($allowedunits)[0] : '',
@@ -669,11 +652,11 @@ function amount_field_widget_form(&$form, &$form_state, $field, $instance, $lang
     );
     $element['amount'] += $prefixsuffix;
   }
-  else {
+  elseif( $allowedunits !== NULL ) {
     $element['units'] = array(
       '#type' => 'select',
       '#multiple' => FALSE,
-      '#default_value' => $units,
+      '#default_value' => $units ? $units : array_keys($allowedunits)[0],
       '#options' => $allowedunits,
       '#element_validate' => array('_amount_units_validate'),
     );

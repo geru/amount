@@ -73,3 +73,7 @@ function amount_amount_mapping_alter( &$mapping ) {
   $mapping += $mappingstoadd;
 }
 
+/*
+ * Field and instance settings:
+ * - see field.yaml
+ */

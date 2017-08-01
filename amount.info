@@ -3,6 +3,9 @@ description = A numerical field type with large range, high precision, and assoc
 package = Fields
 version = VERSION
 core = 7.x
+backdrop = 1.x  ; these two added for Backdrop compatibility
+type = module   ;   "    "    "    "     "         "
+
 dependencies[] = y
 dependencies[] = field
-files[] = amount.test
+; files[] = amount.test
