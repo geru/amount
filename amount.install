@@ -32,3 +32,10 @@ function amount_requirements($phase) {
   }
   return $requirements;
 }
+
+/**
+ * Implements hook_install
+ */
+function amount_install() {
+  y__info_static_cache_clear(); // this must be done to make sure Amount gets its own stuff loaded in time for hook_field_info(), etc. calls
+}

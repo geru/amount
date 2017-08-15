@@ -12,10 +12,7 @@ function amount_help($path, $arg) {
   $ret = NULL;
   switch ($path) {
     case 'admin/help#amount':
-      $ret = '';
-      foreach( y__protocol('field', 'help', 'amount')['amount'] as $tag => $text) {
-        $ret .= "<$tag>" . $text . "</$tag>";
-      }
+      $ret = y__html(y__protocol('field', 'help', 'amount')['amount']);
     break;
   }
   return $ret;
